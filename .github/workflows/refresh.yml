@@ -1,0 +1,53 @@
+name: Update saved recruitment results
+on:
+  schedule:
+    - cron: '47 9,21 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: all-state-background-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: vars.ENABLE_BACKGROUND_REFRESH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Start measurement clock
+        run: echo "BACKGROUND_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Read private worker code
+        uses: actions/checkout@v4
+        with:
+          repository: jhakkash/mbbs-jobs-tracker
+          ref: codex/twelve-hour-background-refresh
+          ssh-key: ${{ secrets.PRIVATE_WORKER_READ_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache/restore@v4
+        with:
+          path: artifacts/document-cache
+          key: recruitment-documents-${{ github.run_id }}
+          restore-keys: recruitment-documents-
+      - run: node scripts/prepare-pdf-worker.mjs
+      - name: Refresh every configured state
+        run: pnpm exec tsx scripts/background-refresh.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKGROUND_STATE: all
+      - name: Bound reusable document storage
+        if: always()
+        run: pnpm exec tsx -e "import {trimDocumentCache} from './lib/background-document-cache'; trimDocumentCache('artifacts/document-cache')"
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: artifacts/document-cache
+          key: recruitment-documents-${{ github.run_id }}
