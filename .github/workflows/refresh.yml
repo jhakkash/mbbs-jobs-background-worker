@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jhakkash/mbbs-jobs-tracker
-          ref: codex/twelve-hour-background-refresh
+          ref: main
           ssh-key: ${{ secrets.PRIVATE_WORKER_READ_KEY }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
