@@ -1,0 +1,39 @@
+name: Enrich saved recruitment details
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        required: true
+        default: Delhi
+        description: State whose saved openings need count, deadline and pay enrichment
+permissions:
+  contents: read
+concurrency:
+  group: essential-details-${{ inputs.state }}
+  cancel-in-progress: false
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: jhakkash/mbbs-jobs-tracker
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_WORKER_READ_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/prepare-pdf-worker.mjs
+      - name: Read official notices and save essential details
+        run: pnpm exec tsx scripts/enrich-saved-state.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKGROUND_STATE: ${{ inputs.state }}
