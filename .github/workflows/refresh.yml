@@ -8,16 +8,17 @@ permissions:
 concurrency:
   group: all-state-background-refresh
   cancel-in-progress: false
+env:
+  NODE_OPTIONS: --dns-result-order=ipv4first --max-old-space-size=4096
 jobs:
-  refresh:
+  discover:
     if: vars.ENABLE_BACKGROUND_REFRESH == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.states.outputs.matrix }}
     steps:
-      - name: Start measurement clock
-        run: echo "BACKGROUND_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-      - name: Read private worker code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: jhakkash/mbbs-jobs-tracker
           ref: main
@@ -28,26 +29,98 @@ jobs:
           version: 11.19.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: states
+        run: pnpm exec tsx scripts/list-background-states.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  refresh:
+    needs: discover
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    name: Refresh ${{ matrix.state }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - run: echo "BACKGROUND_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: jhakkash/mbbs-jobs-tracker
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_WORKER_READ_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/cache/restore@v4
         with:
           path: artifacts/document-cache
-          key: recruitment-documents-${{ github.run_id }}
-          restore-keys: recruitment-documents-
+          key: recruitment-state-${{ matrix.key }}-${{ github.run_id }}
+          restore-keys: recruitment-state-${{ matrix.key }}-
       - run: node scripts/prepare-pdf-worker.mjs
-      - name: Refresh every configured state
+      - name: Fetch, enrich, save and verify state results
         run: pnpm exec tsx scripts/background-refresh.ts
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          BACKGROUND_STATE: all
-      - name: Bound reusable document storage
+          BACKGROUND_STATE: ${{ matrix.state }}
+          PUBLIC_BACKGROUND_RUNNER: 'true'
+          BACKGROUND_CACHE_BYTES: '16777216'
+      - name: Bound document cache
         if: always()
-        run: pnpm exec tsx -e "import {trimDocumentCache} from './lib/background-document-cache'; trimDocumentCache('artifacts/document-cache')"
+        run: pnpm exec tsx -e "import {trimDocumentCache} from './lib/background-document-cache'; trimDocumentCache('artifacts/document-cache',16777216)"
       - uses: actions/cache/save@v4
         if: always()
         with:
           path: artifacts/document-cache
-          key: recruitment-documents-${{ github.run_id }}
+          key: recruitment-state-${{ matrix.key }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: background-${{ matrix.key }}
+          path: artifacts/background/measurement.json
+          retention-days: 2
+  report:
+    needs: [discover, refresh]
+    if: always() && needs.discover.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: jhakkash/mbbs-jobs-tracker
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_WORKER_READ_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: background-*
+          path: reports
+      - name: Count only database-verified state updates
+        run: pnpm exec tsx scripts/summarize-background.ts
+        env:
+          STATE_MATRIX: ${{ needs.discover.outputs.matrix }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: background-summary
+          path: background-summary.json
+          retention-days: 2
