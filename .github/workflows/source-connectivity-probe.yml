@@ -1,0 +1,27 @@
+name: Diagnostic public source connectivity
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check public recruitment endpoints
+        shell: bash
+        run: |
+          urls=(
+            'https://www.esic.gov.in/recruitments'
+            'https://esic.gov.in/recruitments'
+            'https://iocl.com/latest-job-opening'
+            'https://www.nabard.org/careers-notices1.aspx?cid=693&id=26'
+            'https://nr.indianrailways.gov.in/'
+            'https://careers.bhel.in/index.jsp'
+            'https://www.trinayanhospital.com/vc.html'
+            'https://trinayanhospital.com/vc.html'
+            'https://aiimsrewari.edu.in/assets/img/jobs/JR_01_Advert_FINAL.pdf'
+          )
+          for url in "${urls[@]}"; do
+            printf '%s ' "$url"
+            curl -L -sS --max-time 15 -o /dev/null -w 'status=%{http_code} final=%{url_effective} time=%{time_total}\n' "$url" || true
+          done
