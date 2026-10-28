@@ -14,6 +14,7 @@ jobs:
       - name: Probe public recruitment pages
         shell: pwsh
         run: |
+          $curl = if ($IsWindows) { 'curl.exe' } else { 'curl' }
           $urls = @(
             'https://www.esic.gov.in/recruitments',
             'https://esic.gov.in/recruitments',
@@ -25,6 +26,6 @@ jobs:
           )
           foreach ($url in $urls) {
             $sink = Join-Path $env:RUNNER_TEMP 'probe-response'
-            $line = & curl.exe -L -sS -A 'MBBSJobsTracker/0.1' --connect-timeout 8 --max-time 18 -o $sink -w 'status=%{http_code} final=%{url_effective} bytes=%{size_download}' $url 2>&1
+            $line = & $curl -L -sS -A 'MBBSJobsTracker/0.1' --connect-timeout 8 --max-time 18 -o $sink -w 'status=%{http_code} final=%{url_effective} bytes=%{size_download}' $url 2>&1
             Write-Output "$url $line"
           }
