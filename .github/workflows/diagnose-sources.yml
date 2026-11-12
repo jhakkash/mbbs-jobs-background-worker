@@ -1,0 +1,23 @@
+name: Diagnose registered Odisha sources
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Public source DNS and HTTPS diagnostics
+        run: |
+          node --input-type=module <<'JS'
+          import dns from 'node:dns/promises';
+          import https from 'node:https';
+          const urls=['https://khordha.odisha.gov.in/en/notice/recruitment','https://anugola.odisha.gov.in/en/notice/recruitment','https://utkalhospital.com/career/','https://www.utkalhospital.com/career/'];
+          for(const url of urls){const host=new URL(url).hostname;for(const method of ['lookup','resolve4']){try{console.log(JSON.stringify({host,method,answer:await dns[method](host)}));}catch(e){console.log(JSON.stringify({host,method,error:e.message,code:e.code}));}}}
+          await Promise.all(urls.map(url=>new Promise(resolve=>{const start=Date.now();const req=https.get(url,{family:4,headers:{'User-Agent':'Mozilla/5.0',Accept:'text/html'},signal:AbortSignal.timeout(20000)},res=>{let size=0;res.on('data',b=>size+=b.length);res.on('end',()=>{console.log(JSON.stringify({url,status:res.statusCode,bytes:size,ms:Date.now()-start}));resolve();});});req.on('error',e=>{console.log(JSON.stringify({url,error:e.message,code:e.code,ms:Date.now()-start}));resolve();});})));
+          for(const host of ['khordha.odisha.gov.in','utkalhospital.com']){try{const r=await fetch('https://cloudflare-dns.com/dns-query?name='+host+'&type=A',{headers:{accept:'application/dns-json'},signal:AbortSignal.timeout(15000)});console.log(JSON.stringify({host,resolver:'DoH',status:r.status,answer:await r.json()}));}catch(e){console.log(JSON.stringify({host,resolver:'DoH',error:e.message}));}}
+          JS
