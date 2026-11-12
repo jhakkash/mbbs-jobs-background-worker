@@ -8,6 +8,11 @@ on:
         description: Optional JSON array of configured states to retry; [] updates all
         required: false
         default: '[]'
+      sync_sources:
+        description: Sync selected states from their private source manifests before scanning
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -77,6 +82,27 @@ jobs:
           key: recruitment-state-${{ matrix.key }}-${{ github.run_id }}
           restore-keys: recruitment-state-${{ matrix.key }}-
       - run: node scripts/prepare-pdf-worker.mjs
+      - name: Sync and verify registered state sources
+        if: inputs.sync_sources == true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKGROUND_STATE: ${{ matrix.state }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from worker.apply_source_folder import apply_source_folder
+          state = os.environ['BACKGROUND_STATE']
+          matches = []
+          for path in Path('worker').glob('*sources.json'):
+              value = json.loads(path.read_text(encoding='utf-8-sig'))
+              if isinstance(value, dict) and value.get('state') == state:
+                  matches.append(path)
+          if len(matches) != 1:
+              raise RuntimeError('Expected one private source manifest for selected state')
+          apply_source_folder(str(matches[0]), state, os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_ROLE_KEY'])
+          PY
       - name: Fetch, enrich, save and verify state results
         run: pnpm exec tsx scripts/background-refresh.ts
         env:
