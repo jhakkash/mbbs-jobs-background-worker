@@ -13,6 +13,11 @@ on:
         type: boolean
         required: false
         default: false
+      recovery_only:
+        description: Recover only failed saved sources without repeating the successful scan
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -104,11 +109,17 @@ jobs:
           apply_source_folder(str(matches[0]), state, os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_ROLE_KEY'])
           PY
       - name: Fetch, enrich, save and verify state results
-        run: pnpm exec tsx scripts/background-refresh.ts
+        run: |
+          if [ "$RECOVERY_ONLY" = "true" ]; then
+            pnpm exec tsx scripts/recover-saved-sources.ts
+          else
+            pnpm exec tsx scripts/background-refresh.ts
+          fi
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BACKGROUND_STATE: ${{ matrix.state }}
+          RECOVERY_ONLY: ${{ inputs.recovery_only }}
           PUBLIC_BACKGROUND_RUNNER: 'true'
           BACKGROUND_CACHE_BYTES: '16777216'
       - name: Bound document cache
